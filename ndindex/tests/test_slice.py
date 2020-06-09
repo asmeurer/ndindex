@@ -192,6 +192,7 @@ def test_slice_as_subindex_slice_exhaustive():
 
     # a = arange(10)
     # for sargs in iterslice():
+    #     print(sargs)
     #     for indexargs in iterslice():
 
     a = arange(5)
@@ -224,7 +225,7 @@ def test_slice_as_subindex_slice_exhaustive():
                     assert i not in asubindex, "%s.as_subindex(%s) == %s" % (S, Index, Subindex)
 
 # @given(slices(), slices(), integers(0, 100))
-@given(slices(step=integers(1, 10)), slices(step=integers(1, 10)), integers(0, 100))
+@given(slices(), slices(), integers(0, 100))
 def test_slice_as_subindex_slice_hypothesis(s, index, size):
     a = arange(size)
     try:

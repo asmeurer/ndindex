@@ -370,13 +370,17 @@ class Slice(NDIndex):
             raise NotImplementedError("Slice.as_subindex is only implemented for slices")
 
         s = self.reduce()
+        if s == Slice(0, 0, 1):
+            return s
         index = index.reduce()
 
-        if s.step < 0 or index.step < 0:
-            raise NotImplementedError
+        # if s.step < 0 or index.step < 0:
+        #     raise NotImplementedError
 
-        # After reducing, start is not None when step > 0
-        if index.stop is None or s.stop is None or s.start < 0 or index.start < 0 or s.stop < 0 or index.stop < 0:
+        if (s.start is None or index.start is None or
+            s.stop is None or index.stop is None or
+            s.start < 0 or index.start < 0 or
+            s.stop < 0 or index.stop < 0):
             raise NotImplementedError
 
         # Chinese Remainder Theorem. We are looking for a solution to
@@ -391,26 +395,48 @@ class Slice(NDIndex):
             return Slice(0, 0, 1)
         common, _ = res
         lcm = ilcm(s.step, index.step)
-        start = max(s.start, index.start)
+        if s.step > 0:
+            if index.step > 0:
+                start = max(s.start, index.start)
+            else:
+                start = max(s.start, index.stop + 1)
+        else:
+            if index.step > 0:
+                start = min(s.start, index.stop - 1)
+            else:
+                start = min(s.start, index.start)
 
         def _smallest(x, a, m):
             """
-            Gives the smallest integer >= x that equals a (mod m)
-
-            Assumes x >= 0, m >= 1, and 0 <= a < m.
+            Gives the smallest integer >= x that is congruent to a (mod m)
             """
+            m = abs(m)
+            a = a % m
             n = int(math.ceil((x - a)/m))
             return a + n*m
 
         # Get the smallest lcm multiple of common that is >= start
         start = _smallest(start, common, lcm)
         # Finally, we need to shift start so that it is relative to index
-        start = (start - index.start)//index.step
+        if index.step > 0:
+            start = (start - index.start)//index.step
+        else:
+            # TODO: start should be negative in this case to work correctly
+            # for all array shapes.
+            start = (start - index.step + 1)//-index.step
+        if start < 0:
+            start = 0
 
-        step = lcm//index.step # = s.step//igcd(s.step, index.step)
+        step = lcm//abs(index.step)
 
-        stop = math.ceil((min(s.stop, index.stop) - index.start)/index.step)
-        if stop < 0:
-            stop = 0
+        if index.step > 0:
+            stop = math.ceil((min(s.stop, index.stop) - index.start)/index.step)
+            if stop < 0:
+                stop = 0
+        else:
+            # TODO: This formula is wrong
+            stop = int(math.ceil((min(s.stop, index.start + 1) - index.start)/step))
+            if stop < 0:
+                stop = None
 
         return Slice(start, stop, step)
