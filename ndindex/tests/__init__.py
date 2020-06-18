@@ -58,3 +58,38 @@ otherwise.
 # s: slice (Python type)
 # S: Slice (ndindex type)
 # size: integer passed to arange
+
+import pytest
+
+def test(pytest_args=('--pyargs', 'ndindex'), run_tests=True,
+         run_doctests=True):
+    """
+    Run the ndindex test suite
+
+    To run only a specific submodule, set the pytest_args accordingly.
+
+    The regular tests or doctests can be disabled with the `run_tests` and
+    `run_doctests` flags.
+
+    >>> from ndindex.tests import test
+    >>> # Run all the tests
+    >>> test() # doctest: +SKIP
+    >>> # Run only the doctests
+    >>> test(run_tests=False) # doctest: +SKIP
+    >>> # Run only the test_ellipsis tests
+    >>> test(['--pyargs', 'ndindex.tests.test_ellipsis'], run_doctests=False) # doctest: +SKIP
+    """
+    from .doctest import doctest
+
+    failures = False
+
+    if run_doctests:
+        res = doctest()
+        failures = bool(res.errors or res.failures)
+    if run_tests:
+        # pytest.main returns an ExitCode enum, which is 0 when tests pass
+        # TODO:
+        # - Make pytest ignore pytest.ini
+        # - Add hypothesis profile to not use the example database
+        failures = pytest.main(['--noconftest', '-p', 'no:cacheprovider'] + list(pytest_args)) or failures
+    return not failures
