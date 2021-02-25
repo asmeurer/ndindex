@@ -83,5 +83,5 @@ Shaw group](https://www.deshaw.com/). The D. E. Shaw group collaborates with
 Quansight on numerous open source projects, including Numba, Dask and Project
 Jupyter.
 
-<div style="text-align:center"><a href="https://www.deshaw.com"><img src="/_images/deshaw_logo.png" alt="https://www.deshaw.com"
+<div style="text-align:center"><a href="https://www.deshaw.com"><img src="/docs/imgs/deshaw_logo.png" alt="https://www.deshaw.com"
 width="200"></a></div>
