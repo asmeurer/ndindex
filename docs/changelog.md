@@ -126,7 +126,7 @@ run the ndindex test suite due to the way ndindex tests itself against NumPy.
   the [type confusion](type-confusion-tuples) between `Tuple((1, 2))` and
   `Tuple(1, 2)` (only the latter form is correct).
 
-- Document the [`.args`](args) attribute.
+- Document the [`.args`](ImmutableObject.args) attribute.
 
 - New internal function [`operator_index()`](operator_index), which acts like
   `operator.index()` except it disallows boolean types. A consequence of this
