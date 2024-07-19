@@ -12,7 +12,7 @@ class default:
     """
     pass
 
-from simple_slice_cython import SimpleSliceCython
+from simple_slice_cython import SimpleSliceCython, _reduce_all_int, _reduce_with_size
 
 class Slice(SimpleSliceCython, NDIndexBase):
     """
@@ -289,67 +289,8 @@ class Slice(SimpleSliceCython, NDIndexBase):
                 start = -1
 
         if start is not None and stop is not None:
-            if start >= 0 and stop >= 0 or start < 0 and stop < 0:
-                if step > 0:
-                    if stop <= start:
-                        start, stop, step = 0, 0, 1
-                    elif start >= 0 and start + step >= stop:
-                        # Indexes 1 element. Start has to be >= 0 because a
-                        # negative start could be less than the size of the
-                        # axis, in which case it will clip and the single
-                        # element will be element 0. We can only do that
-                        # reduction if we know the shape.
+            start, stop, step = _reduce_all_int(start, stop, step)
 
-                        # Note that returning Integer here is wrong, because
-                        # slices keep the axis and integers remove it.
-                        stop, step = start + 1, 1
-                    elif start < 0 and start + step > stop:
-                        # The exception is this case where stop is already
-                        # start + 1.
-                        step = stop - start
-                    if start >= 0:
-                        stop -= (stop - start - 1) % step
-                else: # step < 0
-                    if stop >= start:
-                        start, stop, step = 0, 0, 1
-                    elif start < 0 and start + step <= stop:
-                        if start < -1:
-                            stop, step = start + 1, 1
-                        else: # start == -1
-                            stop, step = start - 1, -1
-                    elif stop == start - 1:
-                        stop, step = start + 1, 1
-                    elif start >= 0 and start + step <= stop:
-                        # Indexes 0 or 1 elements. We can't change stop
-                        # because start might clip to a smaller true start if
-                        # the axis is smaller than it, and increasing stop
-                        # would prevent it from indexing an element in that
-                        # case. The exception is the case right before this
-                        # one (stop == start - 1). In that case start cannot
-                        # clip past the stop (it always indexes the same one
-                        # element in the cases where it indexes anything at
-                        # all).
-                        step = stop - start
-                    if start < 0:
-                        stop -= (stop - start + 1) % step
-            elif start >= 0 and stop < 0 and step < 0 and (start < -step or
-                                                           -stop - 1 < -step):
-                if stop == -1:
-                    start, stop, step = 0, 0, 1
-                else:
-                    step = max(-start - 1, stop + 1)
-            elif start < 0 and stop == 0 and step > 0:
-                start, stop, step = 0, 0, 1
-            elif start < 0 and stop >= 0 and step >= min(-start, stop):
-                step = min(-start, stop)
-                if start == -1 or stop == 1:
-                    # Can only index 0 or 1 elements. We can either pick a
-                    # version with positive start and negative step, or
-                    # negative start and positive step. We prefer the former
-                    # as it matches what is done for reduce() with a shape
-                    # (start is always nonnegative).
-                    assert step == 1
-                    start, stop, step = stop - 1, start - 1, -1
         elif start is not None and stop is None:
             if start == -1 and step > 0:
                 start, stop, step = (-1, -2, -1)
@@ -360,6 +301,7 @@ class Slice(SimpleSliceCython, NDIndexBase):
                     start, stop, step = 0, 1, 1
                 elif 0 <= start < -step:
                     step = -start - 1
+
         if shape is None:
             return type(self)(start, stop, step)
 
@@ -374,62 +316,8 @@ class Slice(SimpleSliceCython, NDIndexBase):
             else:
                 stop = -size - 1
 
-        if stop < -size:
-            stop = -size - 1
+        start, stop, step = _reduce_with_size(start, stop, step, size)
 
-        if size == 0:
-            start, stop, step = 0, 0, 1
-        elif step > 0:
-            # start cannot be None
-            if start < 0:
-                start = size + start
-            if start < 0:
-                start = 0
-            if start >= size:
-                start, stop, step = 0, 0, 1
-
-            if stop < 0:
-                stop = size + stop
-                if stop < 0:
-                    stop = 0
-            else:
-                stop = min(stop, size)
-            stop -= (stop - start - 1) % step
-
-            if stop - start == 1:
-                # Indexes 1 element.
-                step = 1
-            elif stop - start <= 0:
-                start, stop, step = 0, 0, 1
-        else:
-            if start < 0:
-                if start >= -size:
-                    start = size + start
-                else:
-                    start, stop = 0, 0
-            if start >= 0:
-                start = min(size - 1, start)
-
-            if -size <= stop < 0:
-                stop += size
-
-            if stop >= 0:
-                if start - stop == 1:
-                    stop, step = start + 1, 1
-                elif start - stop <= 0:
-                    start, stop, step = 0, 0, 1
-                else:
-                    stop += (start - stop - 1) % -step
-
-            # start >= 0
-            if (stop < 0 and start - size - stop <= -step
-                or stop >= 0 and start - stop <= -step):
-                stop, step = start + 1, 1
-            if stop < 0 and start % step != 0:
-                # At this point, negative stop is only necessary to index the
-                # first element. If that element isn't actually indexed, we
-                # prefer a nonnegative stop. Otherwise, stop will be -size - 1.
-                stop = start % -step - 1
         return self.__class__(start, stop, step)
 
     def isvalid(self, shape):
