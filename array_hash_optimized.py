@@ -6,9 +6,28 @@ keeping data on-device (GPU-friendly), and only transfers the final scalar
 hash value to the host.
 
 Specifically optimized for integer (intp) and boolean arrays as used in ndindex.
+
+Requires: array-api-compat
 """
 
 import sys
+from array_api_compat import array_namespace, device
+import math
+
+
+def _get_size(array):
+    """Get total number of elements in array (cross-compatible helper)."""
+    # For PyTorch, .size is a method that returns shape
+    # For NumPy/CuPy, .size is a property that returns number of elements
+    if hasattr(array, 'numel'):
+        # PyTorch
+        return array.numel()
+    elif hasattr(array, 'size') and not callable(array.size):
+        # NumPy, CuPy
+        return array.size
+    else:
+        # Compute from shape
+        return math.prod(array.shape)
 
 
 def hash_array_api_optimized(array, xp=None):
@@ -35,29 +54,22 @@ def hash_array_api_optimized(array, xp=None):
     """
     # Get the array API namespace
     if xp is None:
-        try:
-            xp = array.__array_namespace__()
-        except AttributeError:
-            # Fallback to numpy
-            import numpy as xp
+        xp = array_namespace(array)
 
     # Hash metadata first (computed on host)
     shape_hash = hash(tuple(array.shape))
     dtype_hash = hash(str(array.dtype))
 
     # Handle empty arrays
-    if array.size == 0:
+    size = _get_size(array)
+    if size == 0:
         return hash((shape_hash, dtype_hash, 0))
 
     # Flatten the array for processing
-    flat = xp.reshape(array, (array.size,))
+    flat = xp.reshape(array, (size,))
 
     # Convert to int64 for hashing (booleans -> 0/1, integers stay as is)
-    if hasattr(xp, 'int64'):
-        flat = xp.astype(flat, xp.int64)
-    else:
-        # Fallback for array API implementations without int64
-        flat = xp.asarray(flat, dtype='int64')
+    flat = xp.astype(flat, xp.int64)
 
     # FNV-1a hash parameters
     # Use smaller prime to avoid overflow issues
@@ -65,16 +77,16 @@ def hash_array_api_optimized(array, xp=None):
     FNV_OFFSET = 14695981039346656037
 
     # For very large arrays, use chunked approach to avoid memory issues
-    chunk_size = min(100000, array.size)
+    chunk_size = min(100000, size)
 
-    if array.size <= chunk_size:
+    if size <= chunk_size:
         # Small array - process in one go
         hash_value = _hash_chunk(flat, xp, FNV_OFFSET, FNV_PRIME)
     else:
         # Large array - process in chunks
         hash_value = FNV_OFFSET
-        for i in range(0, array.size, chunk_size):
-            end = min(i + chunk_size, array.size)
+        for i in range(0, size, chunk_size):
+            end = min(i + chunk_size, size)
             chunk = flat[i:end]
             chunk_hash = _hash_chunk(chunk, xp, FNV_OFFSET, FNV_PRIME)
 
@@ -110,19 +122,22 @@ def _hash_chunk(flat_array, xp, offset, prime):
     # XOR all values with position-dependent weights
     n = flat_array.shape[0]
 
+    # Get device for creating new arrays on the same device
+    dev = device(flat_array)
+
     # Create position weights (powers of prime, modulo to prevent overflow)
     # For very large arrays, we'll use a stride pattern
     if n > 10000:
         # Sample-based approach for large arrays
         stride = max(1, n // 10000)
-        indices = xp.arange(0, n, stride, dtype=xp.int64)
+        indices = xp.arange(0, n, stride, dtype=xp.int64, device=dev)
         if hasattr(xp, 'take'):
             sampled = xp.take(flat_array, indices)
         else:
             sampled = flat_array[indices]
 
         # Position-weighted hash
-        positions = xp.arange(len(indices), dtype=xp.int64)
+        positions = xp.arange(len(indices), dtype=xp.int64, device=dev)
         # Keep weights small to prevent overflow
         weights = (positions % 65521) * 31 + 17  # 65521 is largest prime < 2^16
 
@@ -134,7 +149,7 @@ def _hash_chunk(flat_array, xp, offset, prime):
         result = result % (2**63 - 1)
     else:
         # Full hash for smaller arrays
-        positions = xp.arange(n, dtype=xp.int64)
+        positions = xp.arange(n, dtype=xp.int64, device=dev)
 
         # Use prime multipliers for positions (keep weights small)
         weights = (positions % 65521) * 31 + 17
@@ -156,26 +171,24 @@ def hash_array_api_fast(array, xp=None):
     Good balance for ndindex use case where arrays are typically not huge.
     """
     if xp is None:
-        try:
-            xp = array.__array_namespace__()
-        except AttributeError:
-            import numpy as xp
+        xp = array_namespace(array)
 
     # Hash metadata
     shape_hash = hash(tuple(array.shape))
     dtype_hash = hash(str(array.dtype))
 
-    if array.size == 0:
+    size = _get_size(array)
+    if size == 0:
         return hash((shape_hash, dtype_hash, 0))
 
     # Flatten
-    flat = xp.reshape(array, (array.size,))
+    flat = xp.reshape(array, (size,))
 
     # Convert to int64
-    if hasattr(xp, 'int64'):
-        flat = xp.astype(flat, xp.int64)
-    else:
-        flat = xp.asarray(flat, dtype='int64')
+    flat = xp.astype(flat, xp.int64)
+
+    # Get device for creating new arrays on the same device
+    dev = device(flat)
 
     # Simple position-weighted sum
     # This is fast and has good distribution for typical index arrays
@@ -185,7 +198,7 @@ def hash_array_api_fast(array, xp=None):
     if n > 50000:
         # Sample approximately sqrt(n) elements for large arrays
         stride = max(1, int(n ** 0.5))
-        indices = xp.arange(0, n, stride)
+        indices = xp.arange(0, n, stride, device=dev)
         if hasattr(xp, 'take'):
             values = xp.take(flat, indices)
         else:
@@ -195,7 +208,7 @@ def hash_array_api_fast(array, xp=None):
 
     # Compute hash using prime multipliers
     # Keep weights reasonable to prevent overflow
-    positions = xp.arange(len(values), dtype=xp.int64)
+    positions = xp.arange(len(values), dtype=xp.int64, device=dev)
     # Use modulo to keep weights in safe range
     weights = (positions % 65521) * 31 + 17
 
@@ -224,10 +237,7 @@ def hash_array_api_xxhash_style(array, xp=None):
     This is a simplified version that stays on-device.
     """
     if xp is None:
-        try:
-            xp = array.__array_namespace__()
-        except AttributeError:
-            import numpy as xp
+        xp = array_namespace(array)
 
     # Constants from xxHash
     PRIME1 = 11400714785074694791  # 0x9E3779B185EBCA87
@@ -240,15 +250,16 @@ def hash_array_api_xxhash_style(array, xp=None):
     shape_hash = hash(tuple(array.shape))
     dtype_hash = hash(str(array.dtype))
 
-    if array.size == 0:
+    size = _get_size(array)
+    if size == 0:
         return hash((shape_hash, dtype_hash, 0))
 
     # Flatten and convert to int64
-    flat = xp.reshape(array, (array.size,))
-    if hasattr(xp, 'int64'):
-        flat = xp.astype(flat, xp.int64)
-    else:
-        flat = xp.asarray(flat, dtype='int64')
+    flat = xp.reshape(array, (size,))
+    flat = xp.astype(flat, xp.int64)
+
+    # Get device for creating new arrays on the same device
+    dev = device(flat)
 
     n = flat.shape[0]
 
@@ -264,7 +275,7 @@ def hash_array_api_xxhash_style(array, xp=None):
     # Process elements
     if n <= 10000:
         # Small array - process with array operations
-        positions = xp.arange(n, dtype=xp.int64)
+        positions = xp.arange(n, dtype=xp.int64, device=dev)
         weights = (positions % PRIME_C) * PRIME_A + PRIME_B
 
         contributions = flat * weights
@@ -281,12 +292,12 @@ def hash_array_api_xxhash_style(array, xp=None):
         # Large array - sample for performance
         stride = max(1, n // 1000)
         if hasattr(xp, 'take'):
-            indices = xp.arange(0, n, stride, dtype=xp.int64)
+            indices = xp.arange(0, n, stride, dtype=xp.int64, device=dev)
             sampled = xp.take(flat, indices)
         else:
             sampled = flat[::stride]
 
-        positions = xp.arange(len(sampled), dtype=xp.int64)
+        positions = xp.arange(len(sampled), dtype=xp.int64, device=dev)
         weights = (positions % PRIME_C) * PRIME_A + PRIME_B
         contributions = sampled * weights
         sum_val = xp.sum(contributions)
